@@ -1,11 +1,11 @@
 ---
 name: physical
-description: Physical location awareness from FindMy. Use when user says "physical", "where am I", "location", or needs to check current physical location.
+description: Physical location awareness from FindMy. Use when user says "physical", "where am I", "location", "where is nat", or needs to check current physical location.
 ---
 
 # /physical - Physical Location Awareness
 
-Check current physical location from FindMy data using DuckDB.
+Check Nat's current physical location from FindMy data using DuckDB.
 
 ## Usage
 
@@ -16,10 +16,10 @@ Check current physical location from FindMy data using DuckDB.
 
 ## Data Source
 
-- Repo: Configure in `~/.physical-config` or edit REPO below
+- Repo: `laris-co/nat-location-data` (GitHub - authorized friends only)
 - Files: `current.csv` (now), `history.csv` (today's log)
-- Updated: Every 5 minutes via cron
-- Source: FindMy
+- Updated: Every 5 minutes via white.local cron
+- Source: FindMy via Sate's iMac
 
 ## Step 0: Timestamp
 
@@ -30,8 +30,7 @@ date "+🕐 %H:%M (%A %d %B %Y)"
 ## Step 1: Fetch & Query (DuckDB)
 
 ```bash
-# Config: edit this or use ~/.physical-config
-REPO="${PHYSICAL_REPO:-$(cat ~/.physical-config 2>/dev/null || echo 'YOUR_USERNAME/location-data')}"
+REPO="laris-co/nat-location-data"
 
 # Fetch current location
 gh api repos/$REPO/contents/current.csv --jq '.content' | base64 -d > /tmp/loc.csv
@@ -87,15 +86,17 @@ WHERE device LIKE '%iPhone%'
 
 Output: `⏱️ At this location: [hours] hours (since [first_seen])`
 
-## Setup (First Time)
+## Known Places
 
-```bash
-# 1. Configure repo
-echo "YOUR_USERNAME/location-data" > ~/.physical-config
-
-# 2. Or set env var
-export PHYSICAL_REPO="YOUR_USERNAME/location-data"
-```
+| Place | Lat | Lon | Type |
+|-------|-----|-----|------|
+| cnx | 18.7669 | 98.9625 | airport |
+| bkk | 13.6900 | 100.7501 | airport |
+| dmk | 13.9126 | 100.6067 | airport |
+| bitkub | 13.7563 | 100.5018 | office |
+| maya | 18.8024 | 98.9676 | mall |
+| central-cnx | 18.8072 | 98.9847 | mall |
+| cmu | 18.8028 | 98.9531 | university |
 
 ## Directions
 
@@ -105,6 +106,11 @@ If user asks "how far to X":
 🛫 To [destination]:
 - 🗺️ https://maps.google.com/maps?saddr=[lat],[lon]&daddr=[dest_lat],[dest_lon]
 ```
+
+## Access
+
+Authorized collaborators on `laris-co/nat-location-data` can use this skill.
+Contact Nat to request access.
 
 ---
 
