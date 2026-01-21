@@ -1,117 +1,183 @@
-# /physical Skill Template
+# /physical - Oracle Skill (AI Prompt)
 
-Physical location awareness for Oracle using FindMy data.
+> **FOR AI**: This README is your instruction manual. Read and execute.
 
-## Quick Install
+## Trigger Words
+
+When user says: `physical`, `where am I`, `location`, `where is [name]`
+
+## Execute (DuckDB Method)
 
 ```bash
-# Copy to your skills directory
-cp -r physical-skill-template ~/.claude/skills/physical
+# Step 0: Timestamp
+date "+🕐 %H:%M (%A %d %B %Y)"
 
-# Edit config
-nano ~/.claude/skills/physical/scripts/config.ts
+# Step 1: Fetch CSV from GitHub
+REPO="YOUR_USERNAME/location-data"  # ← CONFIGURE THIS
+gh api repos/$REPO/contents/current.csv --jq '.content' | base64 -d > /tmp/location.csv
+
+# Step 2: Query with DuckDB
+duckdb -c "
+SELECT
+  device,
+  ROUND(lat, 4) as lat,
+  ROUND(lon, 4) as lon,
+  battery || '%' as battery,
+  accuracy || 'm' as precision,
+  COALESCE(NULLIF(place, ''), locality) as location,
+  address,
+  strftime(updated::TIMESTAMP, '%H:%M') as updated
+FROM read_csv('/tmp/location.csv')
+ORDER BY device LIKE '%iPhone%' DESC, accuracy ASC
+"
 ```
 
-## Setup Location Data Pipeline
+## Output Format
 
-### 1. Create Private Repo
+```
+📍 Physical Status
+═══════════════════
 
-```bash
-gh repo create location-data --private
-cd location-data
+🏠 Currently At: [location column]
+
+| Device | Battery | Precision | Updated |
+|--------|---------|-----------|---------|
+| iPhone | 85% | 10m | 15:00 |
+
+📍 [address]
+🗺️ Map: https://maps.google.com/?q=[lat],[lon]
 ```
 
-### 2. Install FindMy CLI
+---
+
+## Time at Location (History Query)
 
 ```bash
-# macOS with Homebrew
-brew install findmy
+# Fetch history
+gh api repos/$REPO/contents/history.csv --jq '.content' | base64 -d > /tmp/history.csv
 
-# Or use: https://github.com/malmeloo/FindMy.py
+# Query time range
+duckdb -c "
+SELECT
+  MIN(updated) as first_seen,
+  MAX(updated) as last_seen,
+  COUNT(*) as records,
+  ROUND(EXTRACT(EPOCH FROM (MAX(updated::TIMESTAMP) - MIN(updated::TIMESTAMP))) / 3600, 1) as hours_here
+FROM read_csv('/tmp/history.csv')
+WHERE device LIKE '%iPhone%'
+"
 ```
 
-### 3. Create Export Script
+---
 
-Create `export-location.sh`:
+## Configuration
+
+Edit `REPO` variable in queries above, or create `~/.physical-config`:
 
 ```bash
+echo "YOUR_USERNAME/location-data" > ~/.physical-config
+REPO=$(cat ~/.physical-config)
+```
+
+---
+
+## CSV Schema (Required)
+
+| Column | Type | Example |
+|--------|------|---------|
+| device | VARCHAR | iPhone |
+| lat | DOUBLE | 18.7669 |
+| lon | DOUBLE | 98.9625 |
+| altitude | DOUBLE | 300 |
+| accuracy | INTEGER | 10 |
+| battery | INTEGER | 85 |
+| place | VARCHAR | Home |
+| locality | VARCHAR | Chiang Mai |
+| country | VARCHAR | Thailand |
+| address | VARCHAR | 123 Street |
+| source | VARCHAR | FindMy |
+| isOld | BOOLEAN | false |
+| updated | TIMESTAMP | 2026-01-21T15:00:00Z |
+
+---
+
+## Data Pipeline Setup
+
+```bash
+# 1. Create private repo
+gh repo create location-data --private && cd location-data
+
+# 2. Export script (cron every 5 min)
+cat > export.sh << 'EOF'
 #!/bin/bash
-cd ~/location-data
-
-# Export current location
 findmy export --format csv > current.csv
+cat current.csv >> history.csv
+git add -A && git commit -m "$(date +%H:%M)" && git push
+EOF
+chmod +x export.sh
 
-# Append to history (today only)
-TODAY=$(date +%Y-%m-%d)
-HISTORY_FILE="history-$TODAY.csv"
-
-if [ ! -f "$HISTORY_FILE" ]; then
-  head -1 current.csv > "$HISTORY_FILE"
-fi
-tail -n +2 current.csv >> "$HISTORY_FILE"
-cp "$HISTORY_FILE" history.csv
-
-# Push to GitHub
-git add -A
-git commit -m "location update $(date +%H:%M)" --allow-empty
-git push origin main
+# 3. Crontab
+echo "*/5 * * * * ~/location-data/export.sh" | crontab -
 ```
 
-### 4. Setup Cron
+---
+
+## API Reference
 
 ```bash
-# Run every 5 minutes
-crontab -e
+# Fetch current location
+gh api repos/OWNER/REPO/contents/current.csv --jq '.content' | base64 -d
 
-# Add:
-*/5 * * * * /path/to/export-location.sh >> /tmp/location-export.log 2>&1
+# Query directly with DuckDB (no temp file)
+gh api repos/OWNER/REPO/contents/current.csv --jq '.content' | base64 -d | \
+  duckdb -c "SELECT * FROM read_csv('/dev/stdin')"
 ```
 
-## CSV Format
+---
 
-| Column | Description |
-|--------|-------------|
-| device | Device name (iPhone, iPad, etc.) |
-| lat | Latitude |
-| lon | Longitude |
-| altitude | Altitude in meters |
-| accuracy | Location accuracy in meters |
-| battery | Battery percentage |
-| place | Named place (if known) |
-| locality | City/area name |
-| country | Country |
-| address | Full address |
-| source | Data source (FindMy) |
-| isOld | Whether location is stale |
-| updated | ISO timestamp |
+## Learning oracle-skills-cli
 
-## Usage
+Source: `github.com/Soul-Brews-Studio/oracle-skills-cli`
+
+### Skill Format
+
+```yaml
+---
+name: skill-name
+description: Triggers on "keyword1", "keyword2"
+---
+
+# /skill-name
+
+## Step 0: Timestamp
+## Step 1: [Action]
+## Step 2: [Action]
+
+ARGUMENTS: $ARGUMENTS
+```
+
+### Fetch Any Skill
 
 ```bash
-# In Claude Code or OpenCode
-/physical
-
-# Direct script
-bun ~/.claude/skills/physical/scripts/location-query.ts all
+gh api repos/Soul-Brews-Studio/oracle-skills-cli/contents/src/skills/{name}/SKILL.md \
+  --jq '.content' | base64 -d
 ```
 
-## Privacy Notes
+### Install Paths
 
-- Your location data stays in YOUR private repo
-- Only accessible via your GitHub token
-- Oracle only reads, never writes location data
-- Consider who has access to your gh CLI token
+| Agent | Path |
+|-------|------|
+| Claude Code | `~/.claude/skills/{name}/SKILL.md` |
+| OpenCode | `~/.config/opencode/skills/{name}/SKILL.md` |
 
-## Troubleshooting
+---
 
-**"File not found" error**
-- Check CONFIG.LOCATION_REPO in config.ts
-- Verify repo exists: `gh repo view YOUR_USERNAME/location-data`
+## Oracle Philosophy
 
-**"No records found"**
-- Check if cron job is running: `tail /tmp/location-export.log`
-- Verify CSV format matches expected columns
+- **Nothing is Deleted** - History is append-only
+- **Query, Don't Read** - Use DuckDB, not cat
+- **External Brain** - Location extends awareness
 
-**Old location shown**
-- FindMy updates based on device activity
-- Check `isOld` column in CSV
+---
+
+*Soul-Brews-Studio/oracle-skills-physical*

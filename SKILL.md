@@ -5,18 +5,18 @@ description: Physical location awareness from FindMy. Use when user says "physic
 
 # /physical - Physical Location Awareness
 
-Check your current physical location from FindMy data.
+Check current physical location from FindMy data using DuckDB.
 
 ## Usage
 
 ```
 /physical              # Show current location
-/physical history      # Show today's movement history
+/physical history      # Show today's movement
 ```
 
 ## Data Source
 
-- Repo: `YOUR_USERNAME/location-data` (GitHub - EDIT IN config.ts)
+- Repo: Configure in `~/.physical-config` or edit REPO below
 - Files: `current.csv` (now), `history.csv` (today's log)
 - Updated: Every 5 minutes via cron
 - Source: FindMy
@@ -27,65 +27,75 @@ Check your current physical location from FindMy data.
 date "+🕐 %H:%M (%A %d %B %Y)"
 ```
 
-## Step 1: Run Script
+## Step 1: Fetch & Query (DuckDB)
 
 ```bash
-# Locate the script
-LOCATIONS=(
-  "$HOME/.claude/skills/physical/scripts/location-query.ts"
-  "$HOME/.config/opencode/skills/physical/scripts/location-query.ts"
-  "./.claude/skills/physical/scripts/location-query.ts"
-)
+# Config: edit this or use ~/.physical-config
+REPO="${PHYSICAL_REPO:-$(cat ~/.physical-config 2>/dev/null || echo 'YOUR_USERNAME/location-data')}"
 
-SCRIPT=""
-for loc in "${LOCATIONS[@]}"; do
-  if [ -f "$loc" ]; then
-    SCRIPT="$loc"
-    break
-  fi
-done
+# Fetch current location
+gh api repos/$REPO/contents/current.csv --jq '.content' | base64 -d > /tmp/loc.csv
 
-if [ -z "$SCRIPT" ]; then
-  echo "Error: location-query.ts not found. Install: oracle-skills install physical"
-else
-  bun "$SCRIPT" all
-fi
+# Query with DuckDB
+duckdb -c "
+SELECT
+  device,
+  ROUND(lat, 4) as lat,
+  ROUND(lon, 4) as lon,
+  battery || '%' as battery,
+  accuracy || 'm' as precision,
+  COALESCE(NULLIF(place, ''), locality) as location,
+  address,
+  strftime(updated::TIMESTAMP, '%H:%M') as time
+FROM read_csv('/tmp/loc.csv')
+ORDER BY device LIKE '%iPhone%' DESC, accuracy ASC
+"
 ```
 
 ## Step 2: Display Output
-
-Parse and display:
 
 ```
 📍 Physical Status
 ═══════════════════
 
-🏠 Currently At: [place column, or locality if empty]
+🏠 Currently At: [location column]
 
 | Device | Battery | Precision | Updated |
 |--------|---------|-----------|---------|
-[one row per device, sorted by accuracy]
+[one row per device from query]
 
 📍 [address from iPhone row]
 🗺️ Map: https://maps.google.com/?q=[lat],[lon]
-
-⏱️ At this location: [X hours] (from TIME_AT_LOCATION section)
 ```
 
-## Setup Required
+## Step 3: Time at Location (if history requested)
 
-**First time only:**
+```bash
+gh api repos/$REPO/contents/history.csv --jq '.content' | base64 -d > /tmp/hist.csv
 
-1. Create private repo: `gh repo create location-data --private`
-2. Setup FindMy export cron (see README.md)
-3. Edit `scripts/config.ts` with your repo name
+duckdb -c "
+SELECT
+  strftime(MIN(updated::TIMESTAMP), '%H:%M') as first_seen,
+  strftime(MAX(updated::TIMESTAMP), '%H:%M') as last_seen,
+  COUNT(*) as records,
+  ROUND((EXTRACT(EPOCH FROM MAX(updated::TIMESTAMP)) -
+         EXTRACT(EPOCH FROM MIN(updated::TIMESTAMP))) / 3600, 1) as hours
+FROM read_csv('/tmp/hist.csv')
+WHERE device LIKE '%iPhone%'
+"
+```
 
-## Known Places (customize in config.ts)
+Output: `⏱️ At this location: [hours] hours (since [first_seen])`
 
-| Place | Lat | Lon | Type |
-|-------|-----|-----|------|
-| home | YOUR_LAT | YOUR_LON | home |
-| work | YOUR_LAT | YOUR_LON | office |
+## Setup (First Time)
+
+```bash
+# 1. Configure repo
+echo "YOUR_USERNAME/location-data" > ~/.physical-config
+
+# 2. Or set env var
+export PHYSICAL_REPO="YOUR_USERNAME/location-data"
+```
 
 ## Directions
 
@@ -93,8 +103,7 @@ If user asks "how far to X":
 
 ```
 🛫 To [destination]:
-- Distance: [calculate km]
-- 🗺️ Directions: https://maps.google.com/maps?saddr=[lat],[lon]&daddr=[dest_lat],[dest_lon]
+- 🗺️ https://maps.google.com/maps?saddr=[lat],[lon]&daddr=[dest_lat],[dest_lon]
 ```
 
 ---
